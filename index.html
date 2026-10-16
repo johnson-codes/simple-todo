@@ -93,6 +93,8 @@ async function api(action, payload = {}) {
 function setStatus(state, text) {
   $('#dot').className = 'dot ' + state;
   $('#mode').textContent = text;
+  // stay out of the way while synced; only show loading/errors/local mode
+  $('.sub').style.visibility = state === 'ok' ? 'hidden' : 'visible';
 }
 
 async function load() {
