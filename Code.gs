@@ -3,14 +3,18 @@
  * Paste into Extensions > Apps Script of a Google Sheet, then Deploy > New deployment > Web app
  * (Execute as: Me, Who has access: Anyone). Connect a browser once by opening the page with #api=<the /exec URL>.
  *
+ * Every request must include the passcode stored in Project Settings > Script properties > PASSCODE
+ * (the same one the image Worker uses). With no PASSCODE set, all requests are refused.
+ *
  * @OnlyCurrentDoc  Limits the script's access to this one spreadsheet.
  */
 const SHEET_NAME = 'Tasks';
-const HEADERS = ['id', 'text', 'done', 'created'];
+const HEADERS = ['id', 'text', 'done', 'created', 'image'];
 const MAX_TEXT = 500;
 const MAX_TASKS = 2000;
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const IMAGE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp|gif)$/;
 
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -19,6 +23,8 @@ function getSheet_() {
     sh = ss.insertSheet(SHEET_NAME);
     sh.appendRow(HEADERS);
     sh.setFrozenRows(1);
+  } else if (sh.getRange(1, HEADERS.length).getValue() !== HEADERS[HEADERS.length - 1]) {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);  // add columns added in later versions
   }
   return sh;
 }
@@ -27,7 +33,7 @@ function readTasks_(sh) {
   const rows = sh.getDataRange().getValues().slice(1);
   return rows
     .filter(r => r[0])
-    .map(r => ({ id: String(r[0]), text: String(r[1]), done: r[2] === true, created: String(r[3]) }));
+    .map(r => ({ id: String(r[0]), text: String(r[1]), done: r[2] === true, created: String(r[3]), image: String(r[4] || '') }));
 }
 
 function findRow_(sh, id) {
@@ -61,13 +67,28 @@ function checkDone_(done) {
   return done;
 }
 
+function checkImage_(image) {
+  if (image === undefined || image === '') return '';
+  if (typeof image !== 'string' || !IMAGE_RE.test(image)) throw new BadRequest_('Invalid image');
+  return image;
+}
+
+function passcodeOk_(given) {
+  const expected = PropertiesService.getScriptProperties().getProperty('PASSCODE');
+  if (!expected || typeof given !== 'string' || given.length !== expected.length) return false;
+  let diff = 0;  // compare every character so timing doesn't reveal how much matched
+  for (let i = 0; i < expected.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 function checkCreated_(created) {
   if (typeof created !== 'string' || !DATE_RE.test(created)) throw new BadRequest_('Invalid created');
   return created;
 }
 
+// Reads go through POST too, so they can carry the passcode
 function doGet() {
-  return json_({ ok: true, tasks: readTasks_(getSheet_()).reverse() });
+  return json_({ ok: false, error: 'Use POST' });
 }
 
 function doPost(e) {
@@ -77,6 +98,7 @@ function doPost(e) {
     let req;
     try { req = JSON.parse(e.postData.contents); } catch (_) { throw new BadRequest_('Invalid JSON'); }
     if (!req || typeof req !== 'object') throw new BadRequest_('Invalid request');
+    if (!passcodeOk_(req.passcode)) throw new BadRequest_('Wrong passcode');
     const sh = getSheet_();
 
     switch (req.action) {
@@ -86,7 +108,7 @@ function doPost(e) {
 
       case 'add': {
         const t = req.task || {};
-        const row = [checkId_(t.id), checkText_(t.text), checkDone_(t.done), checkCreated_(t.created)];
+        const row = [checkId_(t.id), checkText_(t.text), checkDone_(t.done), checkCreated_(t.created), checkImage_(t.image)];
         if (sh.getLastRow() - 1 >= MAX_TASKS) throw new BadRequest_('Task limit reached');
         if (findRow_(sh, t.id) > 0) throw new BadRequest_('Duplicate id');
         sh.appendRow(row);

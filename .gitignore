@@ -1,2 +1,7 @@
 .claude/
 .DS_Store
+# local secrets and build output
+*.local.txt
+.dev.vars
+.wrangler/
+node_modules/

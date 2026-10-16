@@ -18,29 +18,42 @@
   main { max-width: 560px; margin: 40px auto; padding: 0 16px; }
   h1 { font-size: 1.6rem; margin: 0 0 4px; }
   .sub { color: var(--muted); font-size: .9rem; margin-bottom: 20px; display: flex; gap: 8px; align-items: center; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
   .dot.ok { background: var(--ok); } .dot.err { background: var(--danger); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   form.add { display: flex; gap: 8px; }
-  input[type=text], input[type=url] { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+  input[type=text] { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
     border-radius: 8px; background: transparent; color: var(--text); font: inherit; }
   button { padding: 10px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
     font: inherit; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
   button.ghost { background: transparent; color: var(--muted); padding: 4px 8px; }
   button.ghost:hover { color: var(--danger); }
+  button.pic { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 10px 12px; }
+  button.pic:hover, button.pic.on { color: var(--accent); border-color: var(--accent); }
+  .attach { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: .9rem; color: var(--muted); }
+  .attach img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; }
+  .attach span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .filters { display: flex; gap: 4px; margin: 14px 0 6px; font-size: .9rem; }
   .filters button { background: transparent; color: var(--muted); padding: 4px 10px; }
   .filters button.on { background: var(--line); color: var(--text); }
   ul { list-style: none; margin: 0; padding: 0; }
   li { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
   li:last-child { border-bottom: 0; }
-  li input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+  li input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
   li .t { flex: 1; word-break: break-word; cursor: text; }
   li.done .t { text-decoration: line-through; color: var(--muted); }
+  li.done .thumb { opacity: .5; }
   li .edit { flex: 1; padding: 4px 8px; }
+  .thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; cursor: zoom-in; flex: none;
+    background: var(--line); }
   .empty { color: var(--muted); text-align: center; padding: 20px 0; }
   .foot { display: flex; justify-content: space-between; color: var(--muted); font-size: .85rem; margin-top: 10px; }
   .foot button { font-size: .85rem; }
+  dialog { border: 0; padding: 0; background: transparent; max-width: 92vw; max-height: 92vh; }
+  dialog::backdrop { background: rgba(0, 0, 0, .8); }
+  dialog img { display: block; max-width: 92vw; max-height: 92vh; border-radius: 8px; cursor: zoom-out; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -51,8 +64,15 @@
   <div class="card">
     <form class="add" id="addForm">
       <input type="text" id="newTask" placeholder="What needs doing?" autocomplete="off" maxlength="500" required>
-      <button type="submit">Add</button>
+      <button type="button" class="pic" id="picBtn" title="Attach a picture (max 10 MB)" aria-label="Attach a picture" hidden>📷</button>
+      <input type="file" id="picInput" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+      <button type="submit" id="addBtn">Add</button>
     </form>
+    <div class="attach" id="attach" hidden>
+      <img id="attachPreview" alt="">
+      <span id="attachName"></span>
+      <button type="button" class="ghost" id="attachRemove" aria-label="Remove picture">✕</button>
+    </div>
 
     <div class="filters" id="filters">
       <button data-f="all" class="on">All</button>
@@ -69,10 +89,16 @@
   </div>
 </main>
 
+<dialog id="viewer"><img id="viewerImg" alt="Task picture"></dialog>
+
 <script>
-const LS_TASKS = 'todo.tasks', LS_URL = 'todo.apiUrl';
+const LS_TASKS = 'todo.tasks', LS_URL = 'todo.apiUrl', LS_IMG = 'todo.imgUrl', LS_KEY = 'todo.passcode';
+const MAX_IMAGE = 10 * 1024 * 1024;        // limit on the file the user picks
+const MAX_SIDE = 1600;                     // pictures are shrunk to this before upload
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const IMAGE_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp|gif)$/;
 const $ = s => document.querySelector(s);
-let tasks = [], filter = 'all', apiUrl = '';
+let tasks = [], filter = 'all', apiUrl = '', imgUrl = '', passcode = '', pickedFile = null;
 
 function lsGet(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -83,11 +109,67 @@ async function api(action, payload = {}) {
   const res = await fetch(apiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action, ...payload }),
+    body: JSON.stringify({ action, passcode, ...payload }),
   });
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || 'Request failed');
   return data;
+}
+
+// ---- Pictures: Cloudflare Worker + R2 ----
+const imageSrc = key => `${imgUrl}/images/${encodeURIComponent(key)}`;
+
+async function uploadImage(blob) {
+  const res = await fetch(`${imgUrl}/images`, {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type, 'X-Passcode': passcode },
+    body: blob,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+  return data.key;
+}
+
+function deleteImage(key) {
+  if (!key || !imgUrl) return;
+  fetch(imageSrc(key), { method: 'DELETE', headers: { 'X-Passcode': passcode } }).catch(() => {});
+}
+
+// Shrink to MAX_SIDE and re-encode. Re-encoding also drops hidden photo data such as GPS location.
+// GIFs are sent as-is so animations keep working.
+async function prepareImage(file) {
+  if (file.type === 'image/gif') return file;
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  bmp.close();
+  const encode = type => new Promise(r => canvas.toBlob(r, type, 0.85));
+  const webp = await encode('image/webp');
+  return webp && webp.type === 'image/webp' ? webp : encode('image/jpeg');
+}
+
+function pickImage(file) {
+  if (!file) return;
+  if (!IMAGE_TYPES.includes(file.type)) return setStatus('err', 'Pictures must be JPEG, PNG, WebP or GIF');
+  if (file.size > MAX_IMAGE) return setStatus('err', 'Pictures must be 10 MB or smaller');
+  clearPicked();
+  pickedFile = file;
+  $('#attachPreview').src = URL.createObjectURL(file);
+  $('#attachName').textContent = file.name;
+  $('#attach').hidden = false;
+  $('#picBtn').classList.add('on');
+}
+
+function clearPicked() {
+  if ($('#attachPreview').src) URL.revokeObjectURL($('#attachPreview').src);
+  pickedFile = null;
+  $('#attachPreview').removeAttribute('src');
+  $('#attach').hidden = true;
+  $('#picBtn').classList.remove('on');
+  $('#picInput').value = '';
 }
 
 function setStatus(state, text) {
@@ -98,6 +180,8 @@ function setStatus(state, text) {
 }
 
 async function load() {
+  // pictures need both servers, so the button only shows when fully connected
+  $('#picBtn').hidden = !(apiUrl && imgUrl && passcode);
   if (!apiUrl) {
     tasks = lsGet(LS_TASKS, []);
     setStatus('', 'Local (saved in this browser)');
@@ -121,15 +205,29 @@ async function mutate(localChange, action, payload) {
   try {
     await api(action, payload);
     setStatus('ok', 'Synced with Google Sheets');
+    return true;
   } catch (e) {
     setStatus('err', 'Sheets error: ' + e.message);
+    return false;
   }
 }
 
 // ---- Actions ----
-function addTask(text) {
-  const task = { id: crypto.randomUUID(), text, done: false, created: new Date().toISOString() };
-  mutate(() => tasks.unshift(task), 'add', { task });
+async function addTask(text, file) {
+  let image = '';
+  if (file) {
+    setStatus('', 'Uploading picture…');
+    try {
+      image = await uploadImage(await prepareImage(file));
+    } catch (e) {
+      setStatus('err', 'Picture error: ' + e.message);
+      return false;
+    }
+  }
+  const task = { id: crypto.randomUUID(), text, done: false, created: new Date().toISOString(), image };
+  const saved = await mutate(() => tasks.unshift(task), 'add', { task });
+  if (saved === false) deleteImage(image);  // don't leave an orphaned picture behind
+  return true;
 }
 function toggleTask(id) {
   const t = tasks.find(t => t.id === id);
@@ -140,12 +238,15 @@ function editTask(id, text) {
   if (!text || text === t.text) return render();
   mutate(() => t.text = text, 'update', { task: t });
 }
-function deleteTask(id) {
-  mutate(() => tasks = tasks.filter(t => t.id !== id), 'delete', { id });
+async function deleteTask(id) {
+  const t = tasks.find(t => t.id === id);
+  if (await mutate(() => tasks = tasks.filter(t => t.id !== id), 'delete', { id })) deleteImage(t.image);
 }
-function clearDone() {
-  const ids = tasks.filter(t => t.done).map(t => t.id);
-  if (ids.length) mutate(() => tasks = tasks.filter(t => !t.done), 'deleteMany', { ids });
+async function clearDone() {
+  const gone = tasks.filter(t => t.done);
+  if (!gone.length) return;
+  const ids = gone.map(t => t.id);
+  if (await mutate(() => tasks = tasks.filter(t => !t.done), 'deleteMany', { ids })) gone.forEach(t => deleteImage(t.image));
 }
 
 // ---- Render ----
@@ -163,6 +264,16 @@ function render() {
       <span class="t" title="Double-click to edit"></span>
       <button class="ghost" aria-label="Delete">✕</button>`;
     li.querySelector('.t').textContent = t.text;
+    if (t.image && imgUrl && IMAGE_KEY_RE.test(t.image)) {
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.loading = 'lazy';
+      img.alt = 'Picture for this task';
+      img.src = imageSrc(t.image);
+      img.onclick = () => { $('#viewerImg').src = img.src; $('#viewer').showModal(); };
+      img.onerror = () => img.remove();
+      li.querySelector('.t').before(img);
+    }
     li.querySelector('input').onchange = () => toggleTask(t.id);
     li.querySelector('button').onclick = () => deleteTask(t.id);
     li.querySelector('.t').ondblclick = () => startEdit(li, t);
@@ -186,12 +297,24 @@ function startEdit(li, t) {
 }
 
 // ---- Wire up ----
-$('#addForm').onsubmit = e => {
+$('#addForm').onsubmit = async e => {
   e.preventDefault();
   const v = $('#newTask').value.trim();
-  if (v) addTask(v);
-  $('#newTask').value = '';
+  if (!v) return;
+  $('#addBtn').disabled = true;
+  try {
+    if (await addTask(v, pickedFile)) {
+      $('#newTask').value = '';
+      clearPicked();
+    }
+  } finally {
+    $('#addBtn').disabled = false;
+  }
 };
+$('#picBtn').onclick = () => $('#picInput').click();
+$('#picInput').onchange = e => pickImage(e.target.files[0]);
+$('#attachRemove').onclick = clearPicked;
+$('#viewer').onclick = () => $('#viewer').close();
 $('#filters').onclick = e => {
   if (!e.target.dataset.f) return;
   filter = e.target.dataset.f;
@@ -199,15 +322,21 @@ $('#filters').onclick = e => {
   render();
 };
 $('#clearDone').onclick = clearDone;
-// One-time setup: open the page with #api=<exec URL> to connect this browser (#api= alone disconnects).
-// The URL is kept in localStorage and removed from the address bar, so it never lives in the repo.
+
+// One-time setup: open the page with #api=<exec URL>&img=<worker URL>&key=<passcode> to connect this
+// browser (an empty value clears that setting). Values are kept in localStorage and removed from the
+// address bar, so none of them live in the repo.
 function applySetupLink() {
   const hash = new URLSearchParams(location.hash.slice(1));
-  if (hash.has('api')) {
-    lsSet(LS_URL, hash.get('api').trim());
-    history.replaceState(null, '', location.pathname + location.search);
+  const settings = { api: LS_URL, img: LS_IMG, key: LS_KEY };
+  let changed = false;
+  for (const [param, lsKey] of Object.entries(settings)) {
+    if (hash.has(param)) { lsSet(lsKey, hash.get(param).trim().replace(/\/+$/, '')); changed = true; }
   }
+  if (changed) history.replaceState(null, '', location.pathname + location.search);
   apiUrl = lsGet(LS_URL, '');
+  imgUrl = lsGet(LS_IMG, '');
+  passcode = lsGet(LS_KEY, '');
   load();
 }
 window.addEventListener('hashchange', applySetupLink);

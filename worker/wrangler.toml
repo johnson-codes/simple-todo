@@ -1,0 +1,20 @@
+name = "simple-todo-images"
+main = "src/index.js"
+compatibility_date = "2025-02-24"
+
+[vars]
+# Sites allowed to upload/delete. Viewing images works from anywhere.
+ALLOWED_ORIGINS = "https://johnson-codes.github.io,http://localhost:8765"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "simple-todo-images"
+
+# 20 upload/delete requests per minute per IP
+[[unsafe.bindings]]
+name = "LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+# PASSCODE is a secret: set it with `wrangler secret put PASSCODE` (locally: .dev.vars)
