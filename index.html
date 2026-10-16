@@ -50,7 +50,7 @@
 
   <div class="card">
     <form class="add" id="addForm">
-      <input type="text" id="newTask" placeholder="What needs doing?" autocomplete="off" required>
+      <input type="text" id="newTask" placeholder="What needs doing?" autocomplete="off" maxlength="500" required>
       <button type="submit">Add</button>
     </form>
 
@@ -176,6 +176,7 @@ function startEdit(li, t) {
   const span = li.querySelector('.t');
   const input = document.createElement('input');
   input.type = 'text'; input.className = 'edit'; input.value = t.text;
+  input.maxLength = 500;
   span.replaceWith(input);
   input.focus(); input.select();
   let finished = false;
