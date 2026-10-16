@@ -41,9 +41,6 @@
   .empty { color: var(--muted); text-align: center; padding: 20px 0; }
   .foot { display: flex; justify-content: space-between; color: var(--muted); font-size: .85rem; margin-top: 10px; }
   .foot button { font-size: .85rem; }
-  details { margin-top: 20px; font-size: .9rem; }
-  details .row { display: flex; gap: 8px; margin-top: 10px; }
-  details p { color: var(--muted); margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -70,15 +67,6 @@
       <button class="ghost" id="clearDone">Clear completed</button>
     </div>
   </div>
-
-  <details>
-    <summary>Google Sheets sync</summary>
-    <p>Paste your Apps Script web app URL (ends in <code>/exec</code>). Leave blank to stay local.</p>
-    <div class="row">
-      <input type="url" id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec">
-      <button id="saveUrl">Save</button>
-    </div>
-  </details>
 </main>
 
 <script>
@@ -208,15 +196,19 @@ $('#filters').onclick = e => {
   render();
 };
 $('#clearDone').onclick = clearDone;
-$('#saveUrl').onclick = () => {
-  apiUrl = $('#apiUrl').value.trim();
-  lsSet(LS_URL, apiUrl);
+// One-time setup: open the page with #api=<exec URL> to connect this browser (#api= alone disconnects).
+// The URL is kept in localStorage and removed from the address bar, so it never lives in the repo.
+function applySetupLink() {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.has('api')) {
+    lsSet(LS_URL, hash.get('api').trim());
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  apiUrl = lsGet(LS_URL, '');
   load();
-};
-
-apiUrl = lsGet(LS_URL, '');
-$('#apiUrl').value = apiUrl;
-load();
+}
+window.addEventListener('hashchange', applySetupLink);
+applySetupLink();
 </script>
 </body>
 </html>

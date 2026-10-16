@@ -1,7 +1,7 @@
 /**
  * Apps Script backend for the To-Do page.
  * Paste into Extensions > Apps Script of a Google Sheet, then Deploy > New deployment > Web app
- * (Execute as: Me, Who has access: Anyone). Use the /exec URL in the page's "Google Sheets sync" box.
+ * (Execute as: Me, Who has access: Anyone). Connect a browser once by opening the page with #api=<the /exec URL>.
  */
 const SHEET_NAME = 'Tasks';
 const HEADERS = ['id', 'text', 'done', 'created'];
